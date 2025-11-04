@@ -38,9 +38,13 @@ class FrameExtractor:
             str(Path(output_dir) / "%04d.jpg")
         ]
 
-        subprocess.run(cmd, check =True)
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            return output_dir
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Frame extraction failed: {e.stderr}")
     
-    def remove_dupes(self, output_dir, threshold=5, window=10, delete_files = True):
+    def remove_dupes(self, output_dir, threshold=5, window=10, delete_files=True):
         """
         Remove near-duplicate frames using perceptual hashing with a sliding window.
         
@@ -48,18 +52,46 @@ class FrameExtractor:
             output_dir (str | Path): Directory containing extracted frames (.jpg)
             threshold (int): Max Hamming distance between considered duplicates
             window (int): Number of recent hashes to compare against
+            delete_files (bool): Whether to delete duplicate files
+            
         Returns:
             list[str]: Filenames of kept frames
+            
+        Raises:
+            RuntimeError: If image processing fails
         """
-        img_files = sorted([f for f in os.listdir(output_dir) if f.endswith(".jpg")])
+        output_dir = Path(output_dir)
+        img_files = sorted([f for f in os.listdir(output_dir) if f.lower().endswith((".jpg", ".jpeg"))])
         last_hashes = []
         kept = []
         removed_count = 0
+        errors = []
 
         for fname in tqdm(img_files, desc="Removing dupes"):
-            path = os.path.join(output_dir, fname)
-            with Image.open(path) as img:
-                h = imagehash.phash(img)
+            path = output_dir / fname
+            try:
+                with Image.open(path) as img:
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    h = imagehash.phash(img)
+                    
+                # Compare with recent hashes
+                if not any(abs(h - prev) <= threshold for prev in last_hashes):
+                    kept.append(fname)
+                else:
+                    removed_count += 1
+                    if delete_files:
+                        try:
+                            os.remove(path)
+                        except OSError as e:
+                            errors.append(f"Failed to delete {fname}: {e}")
+                            
+                # Slide window
+                last_hashes = (last_hashes + [h])[-window:]
+                    
+            except Exception as e:
+                errors.append(f"Failed to process {fname}: {e}")
+                continue  # Skip this file on error
 
             # compare with recent hashes
             if not any(abs(h - prev) <= threshold for prev in last_hashes):
@@ -68,10 +100,14 @@ class FrameExtractor:
                 removed_count += 1
                 if delete_files:
                     os.remove(path)
-            # slide window
-            last_hashes = (last_hashes + [h])[-window:]
-
         print(f"Removed {removed_count} near-duplicates, kept {len(kept)} frames.")
+        if errors:
+            print("Warnings during processing:")
+            for error in errors[:5]:  # Show first 5 errors
+                print(f"- {error}")
+            if len(errors) > 5:
+                print(f"...and {len(errors) - 5} more errors")
+                
         return kept
     
     def process_video(self, video_path, dedup_thr, dedup_window):
@@ -83,14 +119,14 @@ class FrameExtractor:
         kept_frames = self.remove_dupes(output_dir, dedup_thr, dedup_window)
         return kept_frames
     
-if __name__ == "__main__":
-    extractor = FrameExtractor(
-        output_dir="./extracted_frames",
-        save_frames=True
-    )
+# if __name__ == "__main__":
+#     extractor = FrameExtractor(
+#         output_dir="./extracted_frames",
+#         save_frames=True
+#     )
     
-    kept_frames = extractor.process_video(
-        "back_end/services/video_processing/YTDown.com_YouTube_I-Tried-EVERY-Noodle-In-Vietnam_Media_3W6Fyp64IIo_003_480p.mp4",
-        dedup_thr=5,
-        dedup_window=10
-    )
+#     kept_frames = extractor.process_video(
+#         "back_end/services/video_processing/YTDown.com_YouTube_I-Tried-EVERY-Noodle-In-Vietnam_Media_3W6Fyp64IIo_003_480p.mp4",
+#         dedup_thr=5,
+#         dedup_window=10
+#     )
