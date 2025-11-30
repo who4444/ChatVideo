@@ -119,14 +119,3 @@ class FrameExtractor:
         kept_frames = self.remove_dupes(output_dir, dedup_thr, dedup_window)
         return kept_frames
     
-# if __name__ == "__main__":
-#     extractor = FrameExtractor(
-#         output_dir="./extracted_frames",
-#         save_frames=True
-#     )
-    
-#     kept_frames = extractor.process_video(
-#         "back_end/services/video_processing/YTDown.com_YouTube_I-Tried-EVERY-Noodle-In-Vietnam_Media_3W6Fyp64IIo_003_480p.mp4",
-#         dedup_thr=5,
-#         dedup_window=10
-#     )

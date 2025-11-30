@@ -1,12 +1,12 @@
 import subprocess
 from pathlib import Path
-import whisper
+from faster_whisper import WhisperModel
 import torch
 
 class AudioProcessor:
-    def __init__(self, output_dir='/kaggle/working/',
+    def __init__(self, output_dir='',
                  device = 'cuda' if torch.cuda.is_available() else 'cpu',
-                 model_size='base'):
+                 model_size='large-v3'):
         self.output_dir = Path(output_dir)
         self.device = device
         if output_dir:
@@ -14,7 +14,7 @@ class AudioProcessor:
             
         # Load model once during init
         try:
-            self.model = whisper.load_model(model_size, device=self.device)
+            self.model = WhisperModel(model_size, device=self.device, compute_type="float16")
         except Exception as e:
             raise RuntimeError(f"Failed to load Whisper model: {e}")
 
@@ -60,17 +60,22 @@ class AudioProcessor:
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         
         try:
-            result = self.model.transcribe(
+            segments, info = self.model.transcribe(
                 str(audio_path),
-                language=language,
-                fp16=torch.cuda.is_available()  # Only use fp16 if CUDA available
+                beam_size = 5  
             )
-            return result if return_segments else result['text']
-            
+            results = []
+            for segment in segments:
+                results.append({
+                    "text": segment.text.strip(),
+                    "start": segment.start,
+                    "end": segment.end
+        })
+            return results
         except Exception as e:
             raise RuntimeError(f"Transcription failed: {e}")
+        
     def process_video(self, video_path, 
-                      save_txt=True, save_json=False, save_srt=False, 
                       language=None):
         video_path = Path(video_path)
         
@@ -84,29 +89,16 @@ class AudioProcessor:
             self.extract_audio(video_path, audio_path)
 
             result = self.transcribe_audio(audio_path, return_segments=True, language=language)
-            print("Transcription complete.")
+            srt_path = self.output_dir / f"{video_stem}.srt"
 
-            # 5. Save transcription files
-            if save_txt:
-                txt_path = self.output_dir / f"{video_stem}.txt"
-                self.save_as_txt(result, txt_path)
-                print(f"Saved TXT to: {txt_path}")
+            with open(srt_path, "w", encoding="utf-8") as f:
+                for i, seg in enumerate(result["segments"], start=1):
+                    f.write(f"{i}\n")
+                    f.write(f"{seg['start']:.2f} --> {seg['end']:.2f}\n")
+                    f.write(f"{seg['text'].strip()}\n\n")
                 
-            if save_json:
-                json_path = self.output_dir / f"{video_stem}.json"
-                self.save_as_json(result, json_path)
-                print(f"Saved JSON to: {json_path}")
 
-            if save_srt:
-                srt_path = self.output_dir / f"{video_stem}.srt"
-                self.save_as_srt(result, srt_path)
-                print(f"Saved SRT to: {srt_path}")
-                
             return result
         except Exception as e:
             print(f"Error processing {video_path}: {e}")
             return None
-    def save_as_txt(self, result, file_path):
-        """Saves the transcription as a plain .txt file."""
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(result['text'])
